@@ -99,7 +99,7 @@ def extract_bnp_blocks(page_html):
 
 
 def extract_next_url(page_html, current_url):
-    """Encontra a ligação de paginação '20 seguintes' da própria BNP."""
+    """Encontra a ligação de paginação da própria BNP (ex.: '20 seguintes')."""
     candidates = []
     for match in re.finditer(
         r"<a\b[^>]*href=[\"']([^\"']+)[\"'][^>]*>(.*?)</a\s*>",
@@ -108,10 +108,20 @@ def extract_next_url(page_html, current_url):
     ):
         href = html.unescape(match.group(1)).strip()
         label = strip_tags(match.group(2)).lower()
-        if "seguinte" in label:
-            absolute = urljoin(current_url, href)
-            if absolute != current_url:
-                candidates.append(absolute)
+        # A BNP apresenta a paginação como, por exemplo, "20 seguintes".
+        # Aceitamos também "seguinte", mas só dentro do próprio catálogo.
+        if not re.search(r"\b(?:\d+\s+)?seguintes?\b", label):
+            continue
+        absolute = urljoin(current_url, href)
+        parsed = urlparse(absolute)
+        current = urlparse(current_url)
+        if (
+            absolute != current_url
+            and parsed.scheme in ("http", "https")
+            and parsed.netloc == current.netloc
+            and "/bnp/bnp.exe/" in parsed.path
+        ):
+            candidates.append(absolute)
     return candidates[0] if candidates else None
 
 
@@ -279,6 +289,7 @@ def main():
     added = updated = 0
 
     active = [s for s in sources if s.get("automatic")]
+    print(f"Extractor BNP: bnp_catalog_html | ano-alvo: {TARGET_YEAR}")
     print(f"Fontes institucionais automáticas activas: {len(active)}")
 
     for source in active:

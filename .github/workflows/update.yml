@@ -12,6 +12,18 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: {python-version: '3.x'}
+      - name: Verificar extractor
+        run: |
+          python -m py_compile scripts/update.py scripts/build_catalog.py
+          python - <<'PY'
+          from pathlib import Path
+          text = Path("scripts/update.py").read_text(encoding="utf-8")
+          required = ["TARGET_YEAR = 2026", "bnp_catalog_html", "extract_next_url", "query_urls"]
+          missing = [item for item in required if item not in text]
+          if missing:
+              raise SystemExit(f"Extractor inesperado/incompleto; faltam: {missing}")
+          print("Extractor verificado: versão BNP HTML / 2026 / paginação")
+          PY
       - name: Recolher novidades
         run: python scripts/update.py
       - name: Regenerar catálogo local
