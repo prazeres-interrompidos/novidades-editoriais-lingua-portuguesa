@@ -1,0 +1,221 @@
+[
+  {
+    "id": "bnp",
+    "name": "Bibliografia Nacional Portuguesa — BNP",
+    "country": "PT",
+    "country_name": "Portugal",
+    "type": "institutional",
+    "automatic": false,
+    "url": "https://bibliografia.bnportugal.gov.pt/bnp/bnp.exe/ficha",
+    "notes": "Fonte bibliográfica nacional. Conector estruturado a desenvolver a partir das interfaces bibliográficas públicas."
+  },
+  {
+    "id": "apel",
+    "name": "APEL / Agência Nacional do ISBN",
+    "country": "PT",
+    "country_name": "Portugal",
+    "type": "institutional",
+    "automatic": false,
+    "url": "https://apel.pt/isbn/sistema-isbn/",
+    "notes": "Agência ISBN para Portugal e PALOP/Timor-Leste; fonte de referência para o universo editorial."
+  },
+  {
+    "id": "wook-news",
+    "name": "WOOK — Novidades",
+    "country": "PT",
+    "country_name": "Portugal",
+    "type": "retailer",
+    "automatic": true,
+    "url": "https://www.wook.pt/destaques/novidades-wook/18005/6559",
+    "urls": [
+      "https://www.wook.pt/destaques/novidades-wook/18005/6559",
+      "https://www.wook.pt/destaques/novidades-wook/00/16259"
+    ],
+    "notes": "Novidades WOOK."
+  },
+  {
+    "id": "wook-upcoming",
+    "name": "WOOK — Pré-lançamentos",
+    "country": "PT",
+    "country_name": "Portugal",
+    "type": "retailer",
+    "automatic": true,
+    "upcoming": true,
+    "url": "https://www.wook.pt/destaques/pre-lancamentos/00/11379",
+    "urls": [
+      "https://www.wook.pt/destaques/pre-lancamentos/00/11379"
+    ],
+    "notes": "Próximos lançamentos."
+  },
+  {
+    "id": "bertrand",
+    "name": "Bertrand",
+    "country": "PT",
+    "country_name": "Portugal",
+    "type": "retailer",
+    "automatic": true,
+    "url": "https://www.bertrand.pt/",
+    "urls": [
+      "https://www.bertrand.pt/",
+      "https://www.bertrand.pt/eventos"
+    ],
+    "notes": "Novidades, catálogo e agenda editorial."
+  },
+  {
+    "id": "fnac",
+    "name": "FNAC Portugal — Novidades Livros",
+    "country": "PT",
+    "country_name": "Portugal",
+    "type": "retailer",
+    "automatic": true,
+    "url": "https://www.fnac.pt/livros/Novidades-Livros/s1936",
+    "urls": [
+      "https://www.fnac.pt/livros/Novidades-Livros/s1936",
+      "https://www.fnac.pt/n1345084/Novidades-Livros/As-Ultimas-Novidades",
+      "https://www.fnac.pt/n1380553/Novidades-Livros/Literatura?PageIndex=2"
+    ],
+    "notes": "Novidades e pré-vendas."
+  },
+  {
+    "id": "cbl",
+    "name": "Câmara Brasileira do Livro / Agência Brasileira do ISBN",
+    "country": "BR",
+    "country_name": "Brasil",
+    "type": "institutional",
+    "automatic": false,
+    "url": "https://cbl.org.br/plataforma_de_servic/isbn/",
+    "notes": "Agência Brasileira do ISBN. Fonte institucional a integrar quando houver interface pública de consulta reutilizável."
+  },
+  {
+    "id": "bnbr",
+    "name": "Fundação Biblioteca Nacional — Brasil",
+    "country": "BR",
+    "country_name": "Brasil",
+    "type": "institutional",
+    "automatic": false,
+    "url": "https://acervo.bn.gov.br/Sophia_web/Busca/Avancada",
+    "notes": "Catálogo bibliográfico público; conector estruturado a desenvolver."
+  },
+  {
+    "id": "bncv",
+    "name": "Biblioteca Nacional de Cabo Verde — Catálogo",
+    "country": "CV",
+    "country_name": "Cabo Verde",
+    "type": "institutional",
+    "automatic": false,
+    "url": "https://catalogo.bn.cv/",
+    "notes": "Catálogo bibliográfico público e livraria online; excelente fonte para futura integração."
+  },
+  {
+    "id": "bncv-loja",
+    "name": "Biblioteca Nacional de Cabo Verde — Livraria Online",
+    "country": "CV",
+    "country_name": "Cabo Verde",
+    "type": "retailer",
+    "automatic": true,
+    "url": "https://bn.cv/lojaonline/shop/?view=list",
+    "urls": [
+      "https://bn.cv/lojaonline/shop/?view=list"
+    ],
+    "notes": "Livraria online institucional; a extracção será activada quando os dados estruturados da página forem confirmados."
+  },
+  {
+    "id": "bnang",
+    "name": "Biblioteca Nacional de Angola",
+    "country": "AO",
+    "country_name": "Angola",
+    "type": "institutional",
+    "automatic": false,
+    "url": "https://www.google.com/search?q=Biblioteca+Nacional+de+Angola",
+    "notes": "Fonte institucional por mapear; não é usada pelo robô enquanto não houver URL bibliográfica directa validada."
+  },
+  {
+    "id": "bnmz",
+    "name": "Biblioteca Nacional de Moçambique",
+    "country": "MZ",
+    "country_name": "Moçambique",
+    "type": "institutional",
+    "automatic": false,
+    "url": "https://www.google.com/search?q=Biblioteca+Nacional+de+Mo%C3%A7ambique",
+    "notes": "Fonte institucional por mapear; não é usada pelo robô enquanto não houver URL bibliográfica directa validada."
+  },
+  {
+    "id": "bngw",
+    "name": "Fontes bibliográficas — Guiné-Bissau",
+    "country": "GW",
+    "country_name": "Guiné-Bissau",
+    "type": "institutional",
+    "automatic": false,
+    "url": "",
+    "notes": "Fonte institucional por mapear."
+  },
+  {
+    "id": "bnst",
+    "name": "Fontes bibliográficas — São Tomé e Príncipe",
+    "country": "ST",
+    "country_name": "São Tomé e Príncipe",
+    "type": "institutional",
+    "automatic": false,
+    "url": "",
+    "notes": "Fonte institucional por mapear."
+  },
+  {
+    "id": "bntl",
+    "name": "Fontes bibliográficas — Timor-Leste",
+    "country": "TL",
+    "country_name": "Timor-Leste",
+    "type": "institutional",
+    "automatic": false,
+    "url": "",
+    "notes": "Fonte institucional por mapear."
+  },
+  {
+    "id": "kapulana",
+    "name": "Editora Kapulana",
+    "country": "BR",
+    "country_name": "Brasil",
+    "type": "publisher",
+    "automatic": true,
+    "url": "https://www.kapulana.com.br/",
+    "urls": [
+      "https://www.kapulana.com.br/"
+    ],
+    "notes": "Editora com secção pública de novidades; primeiro conector editorial brasileiro."
+  },
+  {
+    "id": "penguin-pt",
+    "name": "Penguin Livros Portugal",
+    "country": "PT",
+    "country_name": "Portugal",
+    "type": "publisher",
+    "automatic": true,
+    "url": "https://penguinlivros.pt/",
+    "urls": [
+      "https://penguinlivros.pt/"
+    ],
+    "notes": "Fonte editorial directa; notícias e novidades do catálogo."
+  },
+  {
+    "id": "ancora",
+    "name": "Âncora Editora",
+    "country": "PT",
+    "country_name": "Portugal",
+    "type": "publisher",
+    "automatic": true,
+    "url": "https://ancora-editora.pt/",
+    "urls": [
+      "https://ancora-editora.pt/"
+    ],
+    "notes": "Editora portuguesa com área de novidades e últimos lançamentos."
+  },
+  {
+    "id": "eci",
+    "name": "El Corte Inglés Portugal — Livros",
+    "country": "PT",
+    "country_name": "Portugal",
+    "type": "retailer",
+    "automatic": false,
+    "url": "https://www.elcorteingles.pt/",
+    "notes": "Agregador/livraria adicional; conector a validar."
+  }
+]
