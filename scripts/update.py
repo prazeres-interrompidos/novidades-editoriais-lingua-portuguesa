@@ -1,230 +1,241 @@
-"""Recolha automática e gratuita de novidades editoriais.
+"""Recolha institucional de novidades editoriais.
 
-- Usa apenas páginas públicas e respeita robots.txt.
-- Extrai JSON-LD de tipo Book/Product e listas ItemList.
-- Deduplica por ISBN e, na ausência deste, por título+autor+editora.
-- Mantém a fonte original de cada registo.
-- Uma fonte que falhe não impede as restantes.
-
-Para acrescentar uma fonte, editar data/sources.json.
+O projecto privilegia fontes bibliográficas institucionais e formatos de
+interoperabilidade (actualmente OAI-PMH). Fontes comerciais bloqueadas por
+robots.txt não fazem parte da configuração.
 """
 import json, re, sys, time
+from datetime import date, timedelta
 from pathlib import Path
-from urllib.parse import urlparse
-from urllib.robotparser import RobotFileParser
+from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
-from html.parser import HTMLParser
+from urllib.robotparser import RobotFileParser
+from xml.etree import ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / 'data'
 SOURCES = DATA / 'sources.json'
 BOOKS = DATA / 'books.json'
-UA = 'NovidadesEditorialLusofona/1.0 (GitHub Actions)'
+UA = 'NovidadesEditorialLusofona/1.0 (+https://github.com/prazeres-interrompidos/novidades-editoriais-lingua-portuguesa)'
 
 
-def allowed(url):
+def robots_status(url):
     p = urlparse(url)
     robots_url = f'{p.scheme}://{p.netloc}/robots.txt'
     try:
+        req = Request(robots_url, headers={'User-Agent': UA, 'Accept': 'text/plain,*/*;q=0.8'})
+        with urlopen(req, timeout=20) as r:
+            body = r.read().decode('utf-8', 'replace')
         rp = RobotFileParser()
-        rp.set_url(robots_url)
-        rp.read()
-        return rp.can_fetch(UA, url)
-    except Exception:
-        return False
+        rp.parse(body.splitlines())
+        return ('allowed' if rp.can_fetch(UA, url) else 'blocked', robots_url, '')
+    except Exception as e:
+        return ('unavailable', robots_url, f'{type(e).__name__}: {e}')
 
 
-def fetch(url):
+def allowed(url):
+    status, _, _ = robots_status(url)
+    return status == 'allowed'
+
+
+def fetch(url, accept='application/xml,text/xml;q=0.9,*/*;q=0.8'):
     if not allowed(url):
         raise RuntimeError('robots.txt não autoriza a recolha automática ou não está disponível')
-    req = Request(url, headers={
-        'User-Agent': UA,
-        'Accept': 'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8'
-    })
-    with urlopen(req, timeout=30) as r:
-        return r.read().decode('utf-8', 'ignore')
+    req = Request(url, headers={'User-Agent': UA, 'Accept': accept})
+    with urlopen(req, timeout=45) as r:
+        return r.read()
 
 
-class MetaParser(HTMLParser):
-    def __init__(self):
-        super().__init__()
-        self.jsonld = []
-        self._json = False
-        self._buf = []
-
-    def handle_starttag(self, tag, attrs):
-        a = dict(attrs)
-        if tag == 'script' and a.get('type', '').lower() == 'application/ld+json':
-            self._json = True
-            self._buf = []
-
-    def handle_endtag(self, tag):
-        if tag == 'script' and self._json:
-            raw = ''.join(self._buf).strip()
-            try:
-                self.jsonld.append(json.loads(raw))
-            except Exception:
-                pass
-            self._json = False
-
-    def handle_data(self, data):
-        if self._json:
-            self._buf.append(data)
+def text(el, path):
+    node = el.find(path, NS)
+    return (node.text or '').strip() if node is not None and node.text else ''
 
 
-def first(v):
-    if isinstance(v, list):
-        return v[0] if v else ''
-    return v
+def alltext(el, path):
+    return [x.text.strip() for x in el.findall(path, NS) if x.text and x.text.strip()]
 
 
-def name_of(v):
-    if isinstance(v, dict):
-        return v.get('name') or v.get('alternateName') or ''
-    if isinstance(v, list):
-        names = [name_of(x) for x in v]
-        return '; '.join(x for x in names if x)
-    return v or ''
+def localname(tag):
+    return tag.rsplit('}', 1)[-1]
 
 
-def image_of(v):
-    if isinstance(v, dict):
-        return v.get('url') or v.get('contentUrl') or ''
-    if isinstance(v, list):
-        return image_of(v[0]) if v else ''
-    return v or ''
+def first_nonempty(values):
+    for v in values:
+        if v:
+            return v
+    return ''
 
 
-def flatten_jsonld(node):
-    """Extrai Book/Product de JSON-LD, incluindo ItemList e @graph."""
-    if isinstance(node, list):
-        out = []
-        for x in node:
-            out.extend(flatten_jsonld(x))
-        return out
-    if not isinstance(node, dict):
-        return []
-
-    out = []
-    typ = node.get('@type', '')
-    types = typ if isinstance(typ, list) else [typ]
-
-    if 'ItemList' in types:
-        for item in node.get('itemListElement', []) or []:
-            if isinstance(item, dict):
-                obj = item.get('item') or item
-                out.extend(flatten_jsonld(obj))
-        return out
-
-    if '@graph' in node:
-        out.extend(flatten_jsonld(node['@graph']))
-
-    if any(t in ('Book', 'Product') for t in types):
-        author = name_of(node.get('author'))
-        publisher = name_of(node.get('publisher'))
-        image = image_of(node.get('image'))
-        offers = node.get('offers') or {}
-        if isinstance(offers, list):
-            offers = offers[0] if offers else {}
-        out.append({
-            'title': node.get('name') or node.get('headline'),
-            'author': author,
-            'publisher': publisher,
-            'isbn': node.get('isbn') or node.get('gtin13'),
-            'cover': image,
-            'source_url': node.get('url') or offers.get('url'),
-            'date': node.get('datePublished') or node.get('releaseDate') or offers.get('availabilityStarts'),
-            'genre': node.get('genre') or ''
+def parse_oai_dc(xml_bytes, source):
+    root = ET.fromstring(xml_bytes)
+    records = []
+    for rec in root.findall('.//oai:record', NS):
+        dc = rec.find('.//dc:dc', NS)
+        if dc is None:
+            continue
+        vals = {}
+        for child in list(dc):
+            key = localname(child.tag)
+            value = (child.text or '').strip()
+            if value:
+                vals.setdefault(key, []).append(value)
+        title = first_nonempty(vals.get('title', []))
+        if not title:
+            continue
+        creators = vals.get('creator', [])
+        publishers = vals.get('publisher', [])
+        identifiers = vals.get('identifier', [])
+        isbn = ''
+        for ident in identifiers:
+            m = re.search(r'(?<!\d)(97[89]\d{10}|\d{9}[\dXx])(?!\d)', ident.replace('-', ''))
+            if m:
+                isbn = m.group(1).upper()
+                break
+        dates = vals.get('date', [])
+        links = [x for x in identifiers if x.startswith(('http://', 'https://'))]
+        records.append({
+            'title': title,
+            'author': '; '.join(creators),
+            'publisher': '; '.join(publishers),
+            'isbn': isbn,
+            'date': first_nonempty(dates),
+            'source_url': first_nonempty(links) or source.get('endpoint',''),
+            'genre': '; '.join(vals.get('subject', [])),
         })
+    return records
+
+
+def diagnose_oai(source):
+    endpoint = source['endpoint']
+    print('=== TESTE BNP / OAI-PMH ===')
+    status, robots_url, detail = robots_status(endpoint)
+    print(f'[1] robots.txt: {status}')
+    print(f'    URL: {robots_url}')
+    if detail:
+        print(f'    detalhe: {detail}')
+    for label, params in [
+        ('Identify', {'verb': 'Identify'}),
+        ('ListMetadataFormats', {'verb': 'ListMetadataFormats'}),
+    ]:
+        url = endpoint + ('&' if '?' in endpoint else '?') + urlencode(params)
+        try:
+            req = Request(url, headers={'User-Agent': UA, 'Accept': 'application/xml,text/xml;q=0.9,*/*;q=0.8'})
+            with urlopen(req, timeout=45) as r:
+                raw = r.read()
+                print(f'[2] OAI {label}: HTTP {r.status} — {len(raw)} bytes')
+                root = ET.fromstring(raw)
+                error = root.find('.//oai:error', NS)
+                if error is not None:
+                    print(f'    OAI erro: {error.attrib.get("code", "")} — {(error.text or "").strip()}')
+                else:
+                    print('    XML válido recebido.')
+        except Exception as e:
+            print(f'[2] OAI {label}: ERRO — {type(e).__name__}: {e}')
+
+    since = (date.today() - timedelta(days=45)).isoformat()
+    url = endpoint + ('&' if '?' in endpoint else '?') + urlencode({'verb':'ListRecords','metadataPrefix':source.get('metadata_prefix','oai_dc'),'from':since})
+    try:
+        req = Request(url, headers={'User-Agent': UA, 'Accept': 'application/xml,text/xml;q=0.9,*/*;q=0.8'})
+        with urlopen(req, timeout=45) as r:
+            raw = r.read()
+            print(f'[3] OAI ListRecords: HTTP {r.status} — {len(raw)} bytes')
+        found = parse_oai_dc(raw, source)
+        print(f'[4] Registos bibliográficos interpretados: {len(found)}')
+        for b in found[:3]:
+            print(f'    - {b.get("title","")} | {b.get("author","")} | ISBN {b.get("isbn","")} | {b.get("date","")}')
+        print('=== RESULTADO BNP: FUNCIONAL PARA TESTE ===' if found else '=== RESULTADO BNP: endpoint respondeu, mas não foram interpretados registos ===')
+    except Exception as e:
+        print(f'[3] OAI ListRecords: ERRO — {type(e).__name__}: {e}')
+        print('=== RESULTADO BNP: NÃO FUNCIONAL PARA TESTE ===')
+
+
+def harvest_oai(source):
+    endpoint = source['endpoint']
+    metadata_prefix = source.get('metadata_prefix', 'oai_dc')
+    # A janela curta evita descarregar todo o catálogo em cada execução.
+    since = (date.today() - timedelta(days=45)).isoformat()
+    params = {'verb': 'ListRecords', 'metadataPrefix': metadata_prefix, 'from': since}
+    out = []
+    while True:
+        url = endpoint + ('&' if '?' in endpoint else '?') + urlencode(params)
+        raw = fetch(url)
+        root = ET.fromstring(raw)
+        out.extend(parse_oai_dc(raw, source))
+        token = root.find('.//oai:resumptionToken', NS)
+        token_text = (token.text or '').strip() if token is not None else ''
+        if not token_text:
+            break
+        params = {'verb': 'ListRecords', 'resumptionToken': token_text}
+        time.sleep(0.5)
     return out
 
 
-def extract_books(html):
-    parser = MetaParser()
-    parser.feed(html)
-    out = []
-    for doc in parser.jsonld:
-        out.extend(flatten_jsonld(doc))
-    clean = []
-    seen = set()
-    for b in out:
-        title = str(b.get('title') or '').strip()
-        if not title:
-            continue
-        key = (str(b.get('isbn') or '').strip(), re.sub(r'\W+', ' ', title.lower()).strip())
-        if key in seen:
-            continue
-        seen.add(key)
-        clean.append(b)
-    return clean
+def norm_isbn(value):
+    return re.sub(r'[^0-9Xx]', '', str(value or '')).upper()
 
 
-def norm_key(b):
-    isbn = re.sub(r'[^0-9Xx]', '', str(b.get('isbn') or ''))
+def norm_key(book):
+    isbn = norm_isbn(book.get('isbn'))
     if isbn:
         return ('isbn', isbn)
-    text = ' '.join(str(b.get(k) or '') for k in ('title', 'author', 'publisher')).lower()
+    text = ' '.join(str(book.get(k) or '') for k in ('title','author','publisher')).lower()
     return ('text', re.sub(r'\W+', ' ', text).strip())
 
 
-def source_urls(source):
-    urls = source.get('urls') or []
-    if not urls and source.get('url'):
-        urls = [source['url']]
-    return urls
-
-
 def merge_record(old, new):
-    """Prefere valores não vazios do novo registo sem apagar informação existente."""
+    changed = False
     for k, v in new.items():
         if v not in ('', None, [], {}):
-            old[k] = v
-    return old
+            if old.get(k) != v:
+                old[k] = v
+                changed = True
+    return changed
 
 
 def main():
     sources = json.loads(SOURCES.read_text(encoding='utf-8'))
     books = json.loads(BOOKS.read_text(encoding='utf-8'))
     index = {norm_key(b): b for b in books}
-    added = 0
-    updated = 0
+    added = updated = 0
+    active = [s for s in sources if s.get('automatic')]
+    print(f'Fontes institucionais automáticas activas: {len(active)}')
 
-    for source in sources:
-        if not source.get('automatic'):
-            continue
-        for url in source_urls(source):
-            try:
-                html = fetch(url)
-                found = extract_books(html)
-                for b in found:
-                    b.update({
-                        'country': source.get('country', ''),
-                        'source_name': source.get('name', ''),
-                        'source_url': b.get('source_url') or url,
-                        'status': 'upcoming' if source.get('upcoming') else 'new'
-                    })
-                    if not b.get('genre'):
-                        b['genre'] = ''
-                    key = norm_key(b)
-                    if key in index:
-                        before = json.dumps(index[key], sort_keys=True, ensure_ascii=False)
-                        merge_record(index[key], b)
-                        after = json.dumps(index[key], sort_keys=True, ensure_ascii=False)
-                        if before != after:
-                            updated += 1
-                    else:
-                        books.append(b)
-                        index[key] = b
-                        added += 1
-                print(f'[OK] {source["name"]}: {len(found)} registos em {url}')
-                time.sleep(1)
-            except Exception as e:
-                print(f'[AVISO] {source["name"]}: {url} -> {e}', file=sys.stderr)
+    for source in active:
+        try:
+            connector = source.get('connector')
+            if connector == 'oai_pmh':
+                found = harvest_oai(source)
+            else:
+                print(f'[AVISO] {source["name"]}: conector {connector!r} ainda não activado')
+                continue
+            for b in found:
+                b.update({
+                    'country': source.get('country',''),
+                    'source_name': source.get('name',''),
+                    'source_url': b.get('source_url') or source.get('endpoint',''),
+                    'status': 'new'
+                })
+                key = norm_key(b)
+                if key in index:
+                    if merge_record(index[key], b):
+                        updated += 1
+                else:
+                    books.append(b)
+                    index[key] = b
+                    added += 1
+            print(f'[OK] {source["name"]}: {len(found)} registos')
+        except Exception as e:
+            print(f'[AVISO] {source["name"]}: {e}', file=sys.stderr)
 
     books.sort(key=lambda x: (x.get('date') or '', x.get('title') or ''), reverse=True)
     BOOKS.write_text(json.dumps(books, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     print(f'Concluído: {added} novos registos; {updated} registos actualizados; {len(books)} no catálogo.')
 
+
+NS = {
+    'oai': 'http://www.openarchives.org/OAI/2.0/',
+    'dc': 'http://purl.org/dc/elements/1.1/'
+}
 
 if __name__ == '__main__':
     main()
