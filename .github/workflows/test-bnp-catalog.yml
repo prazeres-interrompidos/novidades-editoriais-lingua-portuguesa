@@ -1,4 +1,4 @@
-name: Testar BNP — OAI-PMH
+name: Testar BNP — Catálogo público
 
 on:
   workflow_dispatch:
@@ -7,12 +7,12 @@ permissions:
   contents: read
 
 jobs:
-  test-bnp:
+  test-bnp-catalog:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
-      - name: Testar ligação à BNP
-        run: python scripts/test_bnp.py
+      - name: Testar catálogo público da BNP
+        run: python scripts/test_bnp_catalog.py

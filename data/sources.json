@@ -7,7 +7,7 @@
     "type": "institutional",
     "automatic": true,
     "connector": "oai_pmh",
-    "endpoint": "http://opendata.bnportugal.gov.pt/oai-pmh.htm",
+    "endpoint": "https://opendata.bnportugal.gov.pt/oai-pmh.htm",
     "metadata_prefix": "oai_dc",
     "notes": "Fonte bibliográfica nacional. Metadados sob CC0. Recolha por OAI-PMH a implementar/testar."
   },

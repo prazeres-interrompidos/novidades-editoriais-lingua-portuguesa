@@ -19,23 +19,16 @@ BOOKS = DATA / 'books.json'
 UA = 'NovidadesEditorialLusofona/1.0 (+https://github.com/prazeres-interrompidos/novidades-editoriais-lingua-portuguesa)'
 
 
-def robots_status(url):
+def allowed(url):
     p = urlparse(url)
     robots_url = f'{p.scheme}://{p.netloc}/robots.txt'
     try:
-        req = Request(robots_url, headers={'User-Agent': UA, 'Accept': 'text/plain,*/*;q=0.8'})
-        with urlopen(req, timeout=20) as r:
-            body = r.read().decode('utf-8', 'replace')
         rp = RobotFileParser()
-        rp.parse(body.splitlines())
-        return ('allowed' if rp.can_fetch(UA, url) else 'blocked', robots_url, '')
-    except Exception as e:
-        return ('unavailable', robots_url, f'{type(e).__name__}: {e}')
-
-
-def allowed(url):
-    status, _, _ = robots_status(url)
-    return status == 'allowed'
+        rp.set_url(robots_url)
+        rp.read()
+        return rp.can_fetch(UA, url)
+    except Exception:
+        return False
 
 
 def fetch(url, accept='application/xml,text/xml;q=0.9,*/*;q=0.8'):
@@ -103,50 +96,6 @@ def parse_oai_dc(xml_bytes, source):
             'genre': '; '.join(vals.get('subject', [])),
         })
     return records
-
-
-def diagnose_oai(source):
-    endpoint = source['endpoint']
-    print('=== TESTE BNP / OAI-PMH ===')
-    status, robots_url, detail = robots_status(endpoint)
-    print(f'[1] robots.txt: {status}')
-    print(f'    URL: {robots_url}')
-    if detail:
-        print(f'    detalhe: {detail}')
-    for label, params in [
-        ('Identify', {'verb': 'Identify'}),
-        ('ListMetadataFormats', {'verb': 'ListMetadataFormats'}),
-    ]:
-        url = endpoint + ('&' if '?' in endpoint else '?') + urlencode(params)
-        try:
-            req = Request(url, headers={'User-Agent': UA, 'Accept': 'application/xml,text/xml;q=0.9,*/*;q=0.8'})
-            with urlopen(req, timeout=45) as r:
-                raw = r.read()
-                print(f'[2] OAI {label}: HTTP {r.status} — {len(raw)} bytes')
-                root = ET.fromstring(raw)
-                error = root.find('.//oai:error', NS)
-                if error is not None:
-                    print(f'    OAI erro: {error.attrib.get("code", "")} — {(error.text or "").strip()}')
-                else:
-                    print('    XML válido recebido.')
-        except Exception as e:
-            print(f'[2] OAI {label}: ERRO — {type(e).__name__}: {e}')
-
-    since = (date.today() - timedelta(days=45)).isoformat()
-    url = endpoint + ('&' if '?' in endpoint else '?') + urlencode({'verb':'ListRecords','metadataPrefix':source.get('metadata_prefix','oai_dc'),'from':since})
-    try:
-        req = Request(url, headers={'User-Agent': UA, 'Accept': 'application/xml,text/xml;q=0.9,*/*;q=0.8'})
-        with urlopen(req, timeout=45) as r:
-            raw = r.read()
-            print(f'[3] OAI ListRecords: HTTP {r.status} — {len(raw)} bytes')
-        found = parse_oai_dc(raw, source)
-        print(f'[4] Registos bibliográficos interpretados: {len(found)}')
-        for b in found[:3]:
-            print(f'    - {b.get("title","")} | {b.get("author","")} | ISBN {b.get("isbn","")} | {b.get("date","")}')
-        print('=== RESULTADO BNP: FUNCIONAL PARA TESTE ===' if found else '=== RESULTADO BNP: endpoint respondeu, mas não foram interpretados registos ===')
-    except Exception as e:
-        print(f'[3] OAI ListRecords: ERRO — {type(e).__name__}: {e}')
-        print('=== RESULTADO BNP: NÃO FUNCIONAL PARA TESTE ===')
 
 
 def harvest_oai(source):
