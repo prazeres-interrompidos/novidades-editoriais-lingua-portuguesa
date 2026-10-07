@@ -175,11 +175,9 @@ def parse_bnp_record(block, source):
     if not full_title or not year:
         return None
 
-    current_year = date.today().year
-    min_year = int(source.get("min_publication_year", current_year - 1))
-    max_year = int(source.get("max_publication_year", current_year + 1))
     publication_year = int(year)
-    if not min_year <= publication_year <= max_year:
+    target_year = int(source.get("target_publication_year", 2026))
+    if publication_year != target_year:
         return None
 
     return {
@@ -188,9 +186,9 @@ def parse_bnp_record(block, source):
         "publisher": publisher,
         "country": source.get("country", "PT"),
         "genre": "",
-        "date": f"{year}-01-01",
+        "date": year,
         "date_precision": "year",
-        "status": "upcoming" if publication_year > current_year else "new",
+        "status": "new",
         "source_name": source.get("name", "Bibliografia Nacional Portuguesa — BNP"),
         "source_url": permanent_url,
         "cover": cover,
@@ -202,27 +200,72 @@ def parse_bnp_record(block, source):
     }
 
 
-def harvest_bnp(source):
-    raw, content_type = fetch(source["query_url"])
-    page, encoding = decode_html(raw, content_type)
-    print(f"[BNP] HTML recebido: {len(raw)} bytes; codificação: {encoding}")
-    blocks = extract_bnp_blocks(page)
-    print(f"[BNP] blocos bibliográficos encontrados: {len(blocks)}")
+def extract_next_page_url(page_html, current_url, base_url):
+    """Obtém a ligação de paginação '20 seguintes' da BNP.
 
+    A BNP constrói a paginação no próprio HTML. Em vez de adivinhar
+    parâmetros internos, seguimos a ligação que a própria página fornece.
+    """
+    candidates = []
+    for match in re.finditer(
+        r"<a\b[^>]*href=[\"']([^\"']+)[\"'][^>]*>(.*?)</a\s*>",
+        page_html, re.I | re.S,
+    ):
+        href, label = match.group(1), strip_tags(match.group(2)).lower()
+        if "seguinte" in label or "próxima" in label or "proxima" in label:
+            candidates.append(urljoin(base_url, html.unescape(href)))
+    # Preferir a primeira ligação de página seguinte que ainda não seja a atual.
+    for url in candidates:
+        if url != current_url:
+            return url
+    return None
+
+
+def harvest_bnp(source):
+    current_url = source["query_url"]
+    visited = set()
     records, seen = [], set()
-    max_records = int(source.get("max_records", 500))
-    for block in blocks:
-        record = parse_bnp_record(block, source)
-        if not record:
-            continue
-        key = record["isbn"] or record["bnp_record_id"]
-        if key in seen:
-            continue
-        seen.add(key)
-        records.append(record)
-        if len(records) >= max_records:
+    max_records = int(source.get("max_records", 10000))
+    page_number = 0
+
+    while current_url and current_url not in visited and len(records) < max_records:
+        visited.add(current_url)
+        raw, content_type = fetch(current_url)
+        page, encoding = decode_html(raw, content_type)
+        page_number += 1
+        blocks = extract_bnp_blocks(page)
+        print(
+            f"[BNP] página {page_number}: {len(raw)} bytes; "
+            f"codificação: {encoding}; {len(blocks)} blocos bibliográficos"
+        )
+
+        page_added = 0
+        for block in blocks:
+            record = parse_bnp_record(block, source)
+            if not record:
+                continue
+            key = record["isbn"] or record["bnp_record_id"]
+            if key in seen:
+                continue
+            seen.add(key)
+            records.append(record)
+            page_added += 1
+            if len(records) >= max_records:
+                break
+
+        next_url = None if len(records) >= max_records else extract_next_page_url(
+            page, current_url, source.get("base_url", current_url)
+        )
+        print(
+            f"[BNP] página {page_number}: {page_added} registos 2026; "
+            f"total acumulado: {len(records)}"
+        )
+        if not next_url:
             break
-    print(f"[BNP] registos válidos normalizados: {len(records)}")
+        current_url = next_url
+
+    print(f"[BNP] páginas percorridas: {page_number}")
+    print(f"[BNP] registos 2026 válidos normalizados: {len(records)}")
     return records
 
 

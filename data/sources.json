@@ -12,9 +12,8 @@
     "notes": "Fonte bibliográfica nacional. Metadados sob CC0. Recolha por OAI-PMH a implementar/testar.",
     "query_url": "https://bibliografia.bnportugal.gov.pt/bnp/bnp.exe/queryCDU?ambito=20250902&scdu=00",
     "base_url": "https://bibliografia.bnportugal.gov.pt",
-    "max_records": 500,
-    "min_publication_year": 2025,
-    "max_publication_year": 2027
+    "max_records": 10000,
+    "target_publication_year": 2026
   },
   {
     "id": "bnbr",
