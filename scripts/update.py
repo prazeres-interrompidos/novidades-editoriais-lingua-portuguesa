@@ -4,7 +4,9 @@ import re
 import sys
 from pathlib import Path
 from urllib.error import HTTPError
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
+from urllib.request import HTTPCookieProcessor, build_opener
+from http.cookiejar import CookieJar
 from urllib.request import Request, urlopen
 from urllib.robotparser import RobotFileParser
 
@@ -21,6 +23,8 @@ UA = (
 
 TARGET_YEAR = 2026
 PAGE_LIMIT = 2000
+COOKIE_JAR = CookieJar()
+OPENER = build_opener(HTTPCookieProcessor(COOKIE_JAR))
 
 
 def allowed(url):
@@ -41,17 +45,21 @@ def allowed(url):
         return False
 
 
-def fetch(url):
+def fetch(url, method="GET", data=None):
     if not allowed(url):
         raise RuntimeError(f"robots.txt não autoriza a recolha: {url}")
-    request = Request(
-        url,
-        headers={
-            "User-Agent": UA,
-            "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
-        },
-    )
-    with urlopen(request, timeout=60) as response:
+
+    body = None
+    headers = {
+        "User-Agent": UA,
+        "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
+    }
+    if method.upper() == "POST":
+        body = urlencode(data or []).encode("utf-8")
+        headers["Content-Type"] = "application/x-www-form-urlencoded"
+
+    request = Request(url, data=body, headers=headers, method=method.upper())
+    with OPENER.open(request, timeout=60) as response:
         return response.read(), response.headers.get("Content-Type", ""), response.status
 
 
@@ -98,99 +106,140 @@ def extract_bnp_blocks(page_html):
     ]
 
 
-def extract_next_url(page_html, current_url):
-    """Encontra a próxima página de resultados da BNP.
+def _catalog_candidate(value, current_url):
+    if not value:
+        return None
+    value = html.unescape(str(value)).strip()
+    value = value.replace("\\/", "/")
+    value = value.replace('\\"', '"').replace("\\'", "'")
+    value = re.sub(r'^\s*(?:javascript:\s*)?(?:window\.)?location(?:\.href)?\s*=\s*', '', value, flags=re.I)
+    value = value.strip(' \t\r\n"\'()')
 
-    A BNP/WinLib não expõe a paginação sempre como um <a>. Em algumas
-    respostas, o controlo "20 seguintes" é um input/botão ou é construído
-    por JavaScript. Por isso tentamos, por ordem:
-      1) href de links cujo texto indica "seguintes";
-      2) atributos onclick/action associados ao controlo de paginação;
-      3) URLs do próprio catálogo que aparecem na vizinhança de "seguintes".
-    """
-    current = urlparse(current_url)
+    match = re.search(
+        r'(https?://[^\s"\'<>]+/bnp/bnp\.exe/[^\s"\'<>]+|'
+        r'/?(?:bnp/)?bnp\.exe/[^\s"\'<>]+)',
+        value, re.I,
+    )
+    if match:
+        value = match.group(1)
 
-    def normalise_candidate(value):
-        if not value:
-            return None
-        value = html.unescape(str(value)).strip()
-        value = value.replace('\\/', '/')
-        value = value.replace('\\"', '"').replace("\\'", "'")
+    absolute = urljoin(current_url, value)
+    parsed = urlparse(absolute)
+    path_query = parsed.path + ("?" + parsed.query if parsed.query else "")
+    if absolute == current_url:
+        return None
+    if parsed.scheme not in ("http", "https") or parsed.netloc != urlparse(current_url).netloc:
+        return None
+    if "/bnp/bnp.exe/" not in parsed.path:
+        return None
+    if re.search(r"/bnp/bnp\.exe/registo(?:\?|$)", path_query, re.I):
+        return None
+    # query.php?iso2709 é uma rota de exportação, não uma página de resultados.
+    if re.search(r"/bnp/bnp\.exe/query\.php(?:\?|$)", path_query, re.I):
+        return None
+    return absolute
 
-        # Remover prefixos JavaScript comuns.
-        value = re.sub(r'^\s*(?:javascript:\s*)?(?:window\.)?location(?:\.href)?\s*=\s*', '', value, flags=re.I)
-        value = value.strip(' \t\r\n\"\'()')
 
-        # Procurar directamente uma URL do catálogo dentro do atributo/JS.
-        match = re.search(
-            r'(https?://[^\s\"\'<>]+/bnp/bnp\.exe/[^\s\"\'<>]+|'
-            r'/?(?:bnp/)?bnp\.exe/[^\s\"\'<>]+)',
-            value,
-            re.I,
-        )
-        if match:
-            value = match.group(1)
-
-        absolute = urljoin(current_url, value)
-        parsed = urlparse(absolute)
-        if (
-            absolute != current_url
-            and parsed.scheme in ("http", "https")
-            and parsed.netloc == current.netloc
-            and "/bnp/bnp.exe/" in parsed.path
-            and not re.search(r"/bnp/bnp\.exe/registo(?:\?|$)", parsed.path + ("?" + parsed.query if parsed.query else ""), re.I)
-        ):
-            return absolute
+def _form_next_request(form_html, current_url):
+    """Extrai uma submissão de formulário associada ao controlo '20 seguintes'."""
+    if not re.search(r"(?:\d+\s+)?seguintes?", form_html, re.I):
         return None
 
-    # 1) Links normais.
+    form_match = re.match(r"<form\b([^>]*)>(.*?)</form\s*>", form_html, re.I | re.S)
+    if not form_match:
+        return None
+    attrs, inner = form_match.group(1), form_match.group(2)
+
+    action_match = re.search(r"\baction=[\"']([^\"']*)[\"']", attrs, re.I)
+    if action_match:
+        raw_action = action_match.group(1).strip()
+        action = current_url if not raw_action else _catalog_candidate(raw_action, current_url)
+        if action is None and urljoin(current_url, raw_action) == current_url:
+            action = current_url
+    else:
+        action = current_url
+    if action is None:
+        return None
+
+    method_match = re.search(r"\bmethod=[\"']([^\"']+)[\"']", attrs, re.I)
+    method = (method_match.group(1) if method_match else "GET").upper()
+
+    fields = []
+    submit_found = False
+    controls = re.findall(r"<(?:input|button)\b[^>]*>(?:.*?</button\s*>)?", inner, re.I | re.S)
+    for control in controls:
+        type_match = re.search(r"\btype=[\"']([^\"']*)[\"']", control, re.I)
+        ctype = (type_match.group(1) if type_match else "text").lower()
+        name_match = re.search(r"\bname=[\"']([^\"']+)[\"']", control, re.I)
+        value_match = re.search(r"\bvalue=[\"']([^\"']*)[\"']", control, re.I)
+        label = value_match.group(1) if value_match else strip_tags(control)
+        is_next = bool(re.search(r"(?:\d+\s+)?seguintes?", label, re.I))
+
+        if ctype in ("submit", "button", "image") and is_next:
+            submit_found = True
+            if name_match:
+                fields.append((name_match.group(1), value_match.group(1) if value_match else label))
+            continue
+
+        if ctype in ("hidden", "text", "search") and name_match:
+            fields.append((name_match.group(1), value_match.group(1) if value_match else ""))
+
+    if not submit_found:
+        return None
+
+    if method == "GET":
+        parsed = urlparse(action)
+        query_map = dict(parse_qsl(parsed.query, keep_blank_values=True))
+        for key, value in fields:
+            query_map[key] = value
+        next_url = urlunparse(parsed._replace(query=urlencode(query_map, doseq=True)))
+        return {"method": "GET", "url": next_url, "data": None, "source": "form"}
+
+    if method == "POST":
+        return {"method": "POST", "url": action, "data": fields, "source": "form"}
+
+    return None
+
+
+def extract_next_request(page_html, current_url):
+    """Encontra a próxima página da BNP e devolve método, URL e dados."""
+    # 1) Formulários: é a forma mais importante no catálogo BNP.
+    for form_match in re.finditer(r"<form\b[^>]*>.*?</form\s*>", page_html, re.I | re.S):
+        request = _form_next_request(form_match.group(0), current_url)
+        if request and request["url"] != current_url:
+            return request
+
+    # 2) Links normais.
     for match in re.finditer(
         r"<a\b[^>]*href=[\"']([^\"']+)[\"'][^>]*>(.*?)</a\s*>",
-        page_html,
-        re.I | re.S,
+        page_html, re.I | re.S,
     ):
         label = strip_tags(match.group(2)).lower()
         if re.search(r"\b(?:\d+\s+)?seguintes?\b", label):
-            candidate = normalise_candidate(match.group(1))
+            candidate = _catalog_candidate(match.group(1), current_url)
             if candidate:
-                return candidate
+                return {"method": "GET", "url": candidate, "data": None, "source": "anchor"}
 
-    # 2) Controlo de paginação como input/button/form com onclick/action.
-    tag_pattern = r"<(?:input|button|form)\b[^>]*>"
-    for tag_match in re.finditer(tag_pattern, page_html, re.I | re.S):
+    # 3) Input/button com onclick que contenha directamente a página seguinte.
+    for tag_match in re.finditer(r"<(?:input|button)\b[^>]*>", page_html, re.I | re.S):
         tag = tag_match.group(0)
-        plain = strip_tags(tag).lower()
         value_match = re.search(r"\bvalue=[\"']([^\"']*)[\"']", tag, re.I)
-        label = value_match.group(1).lower() if value_match else plain
-        if not re.search(r"\b(?:\d+\s+)?seguintes?\b", label):
+        label = value_match.group(1) if value_match else strip_tags(tag)
+        if not re.search(r"\b(?:\d+\s+)?seguintes?\b", label, re.I):
             continue
-        for attr in ("onclick", "onchange", "action"):
-            attr_match = re.search(
-                rf"\b{attr}=[\"'](.*?)[\"']", tag, re.I | re.S
-            )
-            if not attr_match:
-                continue
-            candidate = normalise_candidate(attr_match.group(1))
-            if candidate:
-                return candidate
-
-    # 3) Algumas páginas constroem o controlo através de JavaScript.
-    # Procuramos URLs do catálogo perto da palavra "seguintes".
-    for text_match in re.finditer(r"seguintes?", page_html, re.I):
-        inicio = max(0, text_match.start() - 1800)
-        fim = min(len(page_html), text_match.end() + 1800)
-        context = page_html[inicio:fim]
-        for url_match in re.finditer(
-            r"(?:https?://[^\s\"'<>]+/bnp/bnp\.exe/[^\s\"'<>]+|"
-            r"/?(?:bnp/)?bnp\.exe/[^\s\"'<>]+)",
-            context,
-            re.I,
-        ):
-            candidate = normalise_candidate(url_match.group(0))
-            if candidate:
-                return candidate
+        for attr in ("onclick", "onchange"):
+            attr_match = re.search(rf"\b{attr}\s*=\s*([\"\'])(.*?)\1", tag, re.I | re.S)
+            if attr_match:
+                candidate = _catalog_candidate(attr_match.group(2), current_url)
+                if candidate:
+                    return {"method": "GET", "url": candidate, "data": None, "source": attr}
 
     return None
+
+
+def extract_next_url(page_html, current_url):
+    request = extract_next_request(page_html, current_url)
+    return request["url"] if request else None
 
 
 def parse_bnp_record(block, source):
@@ -294,15 +343,20 @@ def parse_bnp_record(block, source):
 def harvest_bnp(source):
     start_urls = source.get("query_urls") or [source["query_url"]]
     records, seen = [], set()
-    visited_urls = set()
+    visited_requests = set()
 
     for start_url in start_urls:
         url = start_url
+        method = "GET"
+        data = None
         pages = 0
 
-        while url and url not in visited_urls and pages < PAGE_LIMIT:
-            visited_urls.add(url)
-            raw, content_type, status = fetch(url)
+        while url and pages < PAGE_LIMIT:
+            request_key = (method.upper(), url, tuple(data or []))
+            if request_key in visited_requests:
+                break
+            visited_requests.add(request_key)
+            raw, content_type, status = fetch(url, method=method, data=data)
             page, encoding = decode_html(raw, content_type)
             pages += 1
 
@@ -319,11 +373,14 @@ def harvest_bnp(source):
                 records.append(record)
                 page_found += 1
 
-            next_url = extract_next_url(page, url)
+            next_request = extract_next_request(page, url)
+            next_url = next_request["url"] if next_request else None
             print(
                 f"[BNP] consulta={url} | página={pages} | "
                 f"blocos={len(blocks)} | novos_2026={page_found}"
             )
+            if next_request:
+                print(f"[BNP] paginação detectada: método={next_request['method']} | origem={next_request['source']}")
 
             # Nunca aceitar silenciosamente uma recolha truncada. Se a BNP
             # indica que existem resultados seguintes mas o extractor não
@@ -339,10 +396,17 @@ def harvest_bnp(source):
                     "para evitar um catálogo incompleto."
                 )
 
-            url = next_url
+            if next_request:
+                url = next_request["url"]
+                method = next_request["method"]
+                data = next_request["data"]
+            else:
+                url = None
+                method = "GET"
+                data = None
 
     print(
-        f"[BNP] páginas percorridas: {len(visited_urls)} | "
+        f"[BNP] páginas percorridas: {len(visited_requests)} | "
         f"registos únicos de {TARGET_YEAR}: {len(records)}"
     )
     return records

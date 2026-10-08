@@ -74,3 +74,8 @@ incompleto.
 - `scripts/test_bnp_pagination.py`
 - `scripts/build_catalog.py`
 - `.github/workflows/update.yml`
+
+
+### Paginação BNP
+
+A recolha segue os controlos de paginação do catálogo BNP, incluindo ligações, formulários e controlos JavaScript. Rotas de exportação como `query.php?iso2709` não são tratadas como páginas de resultados. Se a BNP indicar que existem resultados seguintes e o extractor não conseguir determinar a próxima requisição, a execução é interrompida para evitar um catálogo incompleto.
