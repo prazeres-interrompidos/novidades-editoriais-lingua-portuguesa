@@ -24,6 +24,8 @@ jobs:
               raise SystemExit(f"Extractor inesperado/incompleto; faltam: {missing}")
           print("Extractor verificado: versão BNP HTML / 2026 / paginação")
           PY
+      - name: Testar paginação BNP
+        run: python scripts/test_bnp_pagination.py
       - name: Recolher novidades
         run: python scripts/update.py
       - name: Regenerar catálogo local

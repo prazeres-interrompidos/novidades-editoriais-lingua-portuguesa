@@ -57,6 +57,11 @@ O GitHub Actions executa diariamente `scripts/update.py` e depois
 
 O extractor respeita `robots.txt` e não contorna regras de acesso.
 
+A paginação é validada antes da publicação: se a BNP indicar que existem
+resultados seguintes mas o destino da página seguinte não puder ser
+determinado, a recolha é interrompida para evitar publicar um catálogo
+incompleto.
+
 ### Estrutura
 
 - `index.html`
@@ -66,5 +71,6 @@ O extractor respeita `robots.txt` e não contorna regras de acesso.
 - `data/sources.json`
 - `data/catalog.js`
 - `scripts/update.py`
+- `scripts/test_bnp_pagination.py`
 - `scripts/build_catalog.py`
 - `.github/workflows/update.yml`

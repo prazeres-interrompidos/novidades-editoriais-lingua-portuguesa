@@ -99,30 +99,98 @@ def extract_bnp_blocks(page_html):
 
 
 def extract_next_url(page_html, current_url):
-    """Encontra a ligação de paginação da própria BNP (ex.: '20 seguintes')."""
-    candidates = []
-    for match in re.finditer(
-        r"<a\b[^>]*href=[\"']([^\"']+)[\"'][^>]*>(.*?)</a\s*>",
-        page_html,
-        re.I | re.S,
-    ):
-        href = html.unescape(match.group(1)).strip()
-        label = strip_tags(match.group(2)).lower()
-        # A BNP apresenta a paginação como, por exemplo, "20 seguintes".
-        # Aceitamos também "seguinte", mas só dentro do próprio catálogo.
-        if not re.search(r"\b(?:\d+\s+)?seguintes?\b", label):
-            continue
-        absolute = urljoin(current_url, href)
+    """Encontra a próxima página de resultados da BNP.
+
+    A BNP/WinLib não expõe a paginação sempre como um <a>. Em algumas
+    respostas, o controlo "20 seguintes" é um input/botão ou é construído
+    por JavaScript. Por isso tentamos, por ordem:
+      1) href de links cujo texto indica "seguintes";
+      2) atributos onclick/action associados ao controlo de paginação;
+      3) URLs do próprio catálogo que aparecem na vizinhança de "seguintes".
+    """
+    current = urlparse(current_url)
+
+    def normalise_candidate(value):
+        if not value:
+            return None
+        value = html.unescape(str(value)).strip()
+        value = value.replace('\\/', '/')
+        value = value.replace('\\"', '"').replace("\\'", "'")
+
+        # Remover prefixos JavaScript comuns.
+        value = re.sub(r'^\s*(?:javascript:\s*)?(?:window\.)?location(?:\.href)?\s*=\s*', '', value, flags=re.I)
+        value = value.strip(' \t\r\n\"\'()')
+
+        # Procurar directamente uma URL do catálogo dentro do atributo/JS.
+        match = re.search(
+            r'(https?://[^\s\"\'<>]+/bnp/bnp\.exe/[^\s\"\'<>]+|'
+            r'/?(?:bnp/)?bnp\.exe/[^\s\"\'<>]+)',
+            value,
+            re.I,
+        )
+        if match:
+            value = match.group(1)
+
+        absolute = urljoin(current_url, value)
         parsed = urlparse(absolute)
-        current = urlparse(current_url)
         if (
             absolute != current_url
             and parsed.scheme in ("http", "https")
             and parsed.netloc == current.netloc
             and "/bnp/bnp.exe/" in parsed.path
+            and not re.search(r"/bnp/bnp\.exe/registo(?:\?|$)", parsed.path + ("?" + parsed.query if parsed.query else ""), re.I)
         ):
-            candidates.append(absolute)
-    return candidates[0] if candidates else None
+            return absolute
+        return None
+
+    # 1) Links normais.
+    for match in re.finditer(
+        r"<a\b[^>]*href=[\"']([^\"']+)[\"'][^>]*>(.*?)</a\s*>",
+        page_html,
+        re.I | re.S,
+    ):
+        label = strip_tags(match.group(2)).lower()
+        if re.search(r"\b(?:\d+\s+)?seguintes?\b", label):
+            candidate = normalise_candidate(match.group(1))
+            if candidate:
+                return candidate
+
+    # 2) Controlo de paginação como input/button/form com onclick/action.
+    tag_pattern = r"<(?:input|button|form)\b[^>]*>"
+    for tag_match in re.finditer(tag_pattern, page_html, re.I | re.S):
+        tag = tag_match.group(0)
+        plain = strip_tags(tag).lower()
+        value_match = re.search(r"\bvalue=[\"']([^\"']*)[\"']", tag, re.I)
+        label = value_match.group(1).lower() if value_match else plain
+        if not re.search(r"\b(?:\d+\s+)?seguintes?\b", label):
+            continue
+        for attr in ("onclick", "onchange", "action"):
+            attr_match = re.search(
+                rf"\b{attr}=[\"'](.*?)[\"']", tag, re.I | re.S
+            )
+            if not attr_match:
+                continue
+            candidate = normalise_candidate(attr_match.group(1))
+            if candidate:
+                return candidate
+
+    # 3) Algumas páginas constroem o controlo através de JavaScript.
+    # Procuramos URLs do catálogo perto da palavra "seguintes".
+    for text_match in re.finditer(r"seguintes?", page_html, re.I):
+        inicio = max(0, text_match.start() - 1800)
+        fim = min(len(page_html), text_match.end() + 1800)
+        context = page_html[inicio:fim]
+        for url_match in re.finditer(
+            r"(?:https?://[^\s\"'<>]+/bnp/bnp\.exe/[^\s\"'<>]+|"
+            r"/?(?:bnp/)?bnp\.exe/[^\s\"'<>]+)",
+            context,
+            re.I,
+        ):
+            candidate = normalise_candidate(url_match.group(0))
+            if candidate:
+                return candidate
+
+    return None
 
 
 def parse_bnp_record(block, source):
@@ -256,6 +324,21 @@ def harvest_bnp(source):
                 f"[BNP] consulta={url} | página={pages} | "
                 f"blocos={len(blocks)} | novos_2026={page_found}"
             )
+
+            # Nunca aceitar silenciosamente uma recolha truncada. Se a BNP
+            # indica que existem resultados seguintes mas o extractor não
+            # conseguiu descobrir o destino, a execução deve falhar para que
+            # o catálogo não seja publicado como se estivesse completo.
+            has_next_hint = bool(
+                re.search(r"\b(?:\d+\s+)?seguintes?\b", page, re.I)
+            )
+            if not next_url and has_next_hint and len(blocks) >= 20:
+                raise RuntimeError(
+                    "A BNP indica paginação ('seguintes'), mas não foi possível "
+                    "determinar a URL da página seguinte. Recolha interrompida "
+                    "para evitar um catálogo incompleto."
+                )
+
             url = next_url
 
     print(
